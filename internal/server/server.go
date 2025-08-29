@@ -2,9 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 
 	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/auth"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"github.com/rs/zerolog"
+
 	api "github.com/ttaaoo/proglog/api/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -128,13 +133,29 @@ func newgrpcServer(config *Config) (srv *grpcServer, err error) {
 }
 
 func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
+	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	loggingOpts := []logging.Option{
+		logging.WithLogOnEvents(logging.StartCall, logging.FinishCall),
+		// Add any other option (check functions starting with logging.With).
+	}
+
 	opts = append(opts,
-		grpc.ChainStreamInterceptor(
-			grpc_auth.StreamServerInterceptor(authenticate),
-		),
 		grpc.ChainUnaryInterceptor(
+			logging.UnaryServerInterceptor(InterceptorLogger(logger), loggingOpts...),
 			grpc_auth.UnaryServerInterceptor(authenticate),
 		),
+		grpc.ChainStreamInterceptor(
+			logging.StreamServerInterceptor(InterceptorLogger(logger), loggingOpts...),
+			grpc_auth.StreamServerInterceptor(authenticate),
+		),
+		// grpc.ChainStreamInterceptor(
+		// 	logging.StreamServerInterceptor(grpczerolog.InterceptorLogger(logger), loggingOpts...),
+		// 	grpc_auth.StreamServerInterceptor(authenticate),
+		// ),
+		// grpc.ChainUnaryInterceptor(
+		// 	logging.UnaryServerInterceptor(grpczerolog.InterceptorLogger(logger), loggingOpts...),
+		// 	grpc_auth.UnaryServerInterceptor(authenticate),
+		// ),
 	)
 	gsrv := grpc.NewServer(opts...)
 	srv, err := newgrpcServer(config)
@@ -172,4 +193,25 @@ func authenticate(ctx context.Context) (context.Context, error) {
 	subject := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
 	ctx = context.WithValue(ctx, subjectContextKey{}, subject)
 	return ctx, nil
+}
+
+// InterceptorLogger adapts zerolog logger to interceptor logger.
+// This code is simple enough to be copied and not imported.
+func InterceptorLogger(l zerolog.Logger) logging.Logger {
+	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
+		l := l.With().Fields(fields).Logger()
+
+		switch lvl {
+		case logging.LevelDebug:
+			l.Debug().Msg(msg)
+		case logging.LevelInfo:
+			l.Info().Msg(msg)
+		case logging.LevelWarn:
+			l.Warn().Msg(msg)
+		case logging.LevelError:
+			l.Error().Msg(msg)
+		default:
+			panic(fmt.Sprintf("unknown level %v", lvl))
+		}
+	})
 }
