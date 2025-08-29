@@ -129,10 +129,10 @@ func newgrpcServer(config *Config) (srv *grpcServer, err error) {
 
 func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, error) {
 	opts = append(opts,
-		grpc.StreamInterceptor(
+		grpc.ChainStreamInterceptor(
 			grpc_auth.StreamServerInterceptor(authenticate),
 		),
-		grpc.UnaryInterceptor(
+		grpc.ChainUnaryInterceptor(
 			grpc_auth.UnaryServerInterceptor(authenticate),
 		),
 	)
